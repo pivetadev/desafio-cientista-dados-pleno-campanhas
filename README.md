@@ -216,35 +216,3 @@ Esta seção serve como checklist final para revisão e para orientar outra pess
 6. Experimento A B
    1. Célula de amostragem retorna `(baseline_p, p_t, n_per_group)` com `baseline_p` entre 0 e 1 e `n_per_group` maior que 0
    2. Exemplo visto durante execução `baseline_p ≈ 0.9085`, `p_t = baseline_p + 0.01`, `n_per_group ≈ 9769`
-
-## Publicação no GitHub sem subir dados
-
-### Regra de ouro
-
-Não versionar `data/raw` nem qualquer artefato que permita reconstruir dados sensíveis.
-
-Este repositório inclui `.gitignore` para impedir commit acidental. Mesmo assim, antes de publicar, valide o status do git e confira se nenhum arquivo de `data/raw` aparece como staged.
-
-### Passo a passo para criar e subir um repositório
-
-1. Crie um repositório vazio no GitHub
-2. Na sua máquina, na raiz deste projeto, rode
-
-```
-git init
-git add .
-git commit -m "case whatsapp inteligencia de escolha"
-git branch -M main
-git remote add origin URL_DO_SEU_REPO
-git push -u origin main
-```
-
-3. Depois de subir, confira no GitHub que a pasta `data/raw` não está presente
-
-### Como enviar por e mail
-
-O recomendado é enviar o link do repositório no GitHub e informar como reproduzir
-
-1. Link do repositório
-2. Como baixar os dados no GCS
-3. Como executar o Notebook e quais resultados esperar conforme a seção Resultados esperados
