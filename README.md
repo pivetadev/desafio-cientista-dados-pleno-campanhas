@@ -1,113 +1,250 @@
-# Desafio Técnico - Cientista de Dados Pleno - Squad WhatsApp
+# Inteligência de escolha de telefones no WhatsApp
 
----
+## Objetivo
 
-## Contexto
+Este repositório entrega uma solução reproduzível para criar a Inteligência de Escolha no motor de disparos de WhatsApp.
 
-Na Prefeitura do Rio, enviamos milhares de mensagens por mês via WhatsApp. Cada disparo tem um custo e as janelas de comunicação com o cidadão são preciosas. 
+O problema é a multiplicidade de telefones por cidadão. Um mesmo CPF pode ter vários números com origens e datas de atualização diferentes. A decisão de para quais números enviar uma mensagem impacta custo e efetividade.
 
-O **Registro Municipal Integrado (RMI)** consolida dados de múltiplos sistemas (Saúde, Educação, Assistência Social, IPTU, etc.). Um desafio crítico é a **Multiplicidade**: um mesmo cidadão pode ter vários telefones vinculados a ele, muitas vezes antigos ou desatualizados. 
+A solução aqui produz
 
-Como Cientista de Dados no Squad WhatsApp, seu objetivo é criar a **Inteligência de Escolha**: identificar quais fontes de dados são mais confiáveis ("quentes") para garantir que mensagens críticas cheguem ao cidadão de forma eficiente e com menor custo.
+1. Métricas de qualidade por sistema de origem com intervalos de confiança
+2. Uma análise de decaimento de qualidade por idade do cadastro no sistema
+3. Um ranking de confiabilidade por sistema com suavização estatística para reduzir instabilidade
+4. Um algoritmo de scoring que escolhe automaticamente os dois melhores telefones por CPF
+5. Um desenho completo de experimento A B para validação em produção
 
----
+## Dados e modelo mental
 
-## Instruções
+Tabelas usadas
 
-1. Faça um fork do repositório do desafio para colocar a sua solução
-2. Use **Jupyter Notebooks** (.ipynb) bem documentados ou scripts Python/SQL
-3. Inclua **README.md** explicando sua abordagem, premissas e como reproduzir
-4. **Entrega**: Envie o link do repositório para `selecao.pcrj@gmail.com`
+1. `base_disparo_mascarado` contém o histórico real de disparos e o `status_disparo`
+2. `dim_telefone_mascarado` contém metadados de telefone e a lista `telefone_aparicoes` com uma aparição por sistema de origem, incluindo `id_sistema` e `registro_data_atualizacao`
 
----
+Chave de join
 
-## Dados
+`base_disparo_mascarado.contato_telefone` com `dim_telefone_mascarado.telefone_numero`
 
-Você terá acesso a duas tabelas principais mascaradas para garantir anonimato e consistência:
+Métrica alvo
 
-### 1. Tabela de Performance: `base_disparo_mascarado`
-Histórico real de disparos efetuados pelo motor de mensagens.
+Entrega é aproximada por `status_disparo in {delivered, read}`. Nesta base, os valores estão em minúsculo e `read` implica que a mensagem foi entregue.
 
-### 2. Tabela de Dimensão: `dim_telefone_mascarado`
-Conhecimento consolidado sobre os telefones e suas origens.
+Viés de seleção
 
+Alguns sistemas aparecem mais no log porque já são priorizados. O repositório evita conclusões ingênuas de duas formas
 
-**⚠️ DISCLAIMER SOBRE VIESES**: Algumas bases de dados já são consideradas "mais quentes" pela Prefeitura e aparecem com maior frequência nos logs. Identifique se uma base performa melhor porque é realmente superior ou se os números estão inflados pelo volume de tentativas (viés de seleção).
+1. Reporta taxa com volume e intervalo de confiança
+2. Recalcula a comparação em um subconjunto mais comparável, telefones que aparecem em dois ou mais sistemas
 
-### Acesso aos dados
+## Arquitetura do repositório
 
-Os arquivos Parquet estão disponíveis no bucket GCS:
+Diretórios
+
+1. `data/raw` contém os arquivos Parquet baixados do GCS e o `schema.yml`
+2. `data/processed` é reservado para artefatos derivados, se necessário
+3. `notebooks` contém o Notebook principal com a análise ponta a ponta
+4. `src` contém o código reutilizável, com separação clara entre IO, métricas e scoring
+5. `scripts` contém automações auxiliares, como download
+
+Código fonte em `src`
+
+1. `src/config.py` resolve caminhos do projeto de forma consistente
+2. `src/io.py` localiza e carrega os Parquets em `data/raw`
+3. `src/metrics.py` centraliza a definição de sucesso e cálculo de taxas com intervalo de confiança
+4. `src/scoring.py` implementa o ranking de sistemas e o score por telefone para seleção por CPF
+
+Notebook principal
+
+`notebooks/01_inteligencia_escolha_whatsapp.ipynb`
+
+Este Notebook executa
+
+1. Leitura das tabelas
+2. Desnormalização de `telefone_aparicoes` para obter uma linha por telefone por sistema
+3. Join com a base de disparos
+4. Escolha de um sistema representativo por disparo baseado em maior `registro_data_atualizacao` consistente com a data do envio
+5. Taxas de entrega por sistema e análise de viés
+6. Decaimento por idade do dado e estimação de meia vida
+7. Ranking de sistemas e score final por telefone
+8. Desenho do experimento A B
+
+## Como executar no Windows
+
+### Passo 1 baixar os dados do Google Cloud Storage
+
+Recomendado instalar o Google Cloud CLI porque ele copia recursivamente
+
+1. Instale
 
 ```
-https://console.cloud.google.com/storage/browser/case_vagas/whatsapp
+winget install -e --id Google.CloudSDK
 ```
----
 
-## Parte 1: Análise Exploratória e Qualidade de Fontes
+2. Autentique sua conta
 
-**O objetivo aqui é medir o "calor" de cada sistema de origem.**
+```
+gcloud auth login
+```
 
-### 1. Desestruturação e Correlação
-Um telefone pode ter vindo de vários sistemas. Use seus conhecimentos para correlacionar cada sistema de origem (`id_sistema_mask`) com a performance real nos disparos (`status_disparo`).
+3. Copie o bucket para `data/raw`
 
-**Entregue**: Análise comparativa de taxas de entrega (`DELIVERED`) agregadas por sistema de origem.
+```
+mkdir data\raw
+gcloud storage cp -r gs://case_vagas/whatsapp/* data/raw/
+```
 
-### 2. Janela de Atualidade
-Investigue se o tempo decorrido desde a última atualização do telefone no sistema de origem (`registro_data_atualizacao`) impacta na chance de sucesso do disparo.
+Resultado esperado em `data/raw`
 
-**Entregue**: Análise de "decaimento" da qualidade do dado ao longo do tempo. Existe um "prazo de validade" para um telefone ser considerado quente?
+1. `base_disparo_mascarado`
+2. `dim_telefone_mascarado`
+3. `schema.yml`
 
----
+### Passo 2 criar ambiente e instalar dependências
 
-## Parte 2: Inteligência de Priorização
+Por conta de caminhos longos no Windows, prefira rodar este repositório em um caminho curto. Exemplo `C:\case-whatsapp`.
 
-**O objetivo aqui é criar a regra de negócio que o motor de disparos seguirá.**
+Na raiz do repositório
 
-### 3. Ranking de Sistemas
-Com base nas análises anteriores, crie um ranking de confiabilidade para os sistemas da Prefeitura. 
+```
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
 
-**Entregue**: Tabela ou Score de ranking das fontes. Explique matematicamente por que o sistema X é melhor que o sistema Y.
+### Passo 3 abrir o Notebook
 
-### 4. Algoritmo de Escolha
+Execute a partir da raiz do repositório para o Python conseguir importar `src`
 
-Imagine que você tem 3 telefones diferentes para o mesmo CPF. Proponha um algoritmo (score ou ranking) que escolha automaticamente os **dois melhores** para receberem a mensagem.
+```
+python -m jupyter lab
+```
 
-**Entregue**: Explicação da lógica do algoritmo. Como você combina a "origem do dado" com a "data de atualização" e o "DDD" para tomar essa decisão?
+Abra o arquivo `notebooks/01_inteligencia_escolha_whatsapp.ipynb` e rode todas as células em ordem.
 
----
+## Como validar que está tudo certo
 
-## Parte 3: Desenho de Experimento
+Checklist no Jupyter
 
-### 5. Proposta de Teste A/B
-Como você validaria que seu novo ranking é realmente melhor do que a estratégia de envio aleatório (ou baseada em ordem alfabética) que usamos hoje?
+1. No Launcher selecione o kernel que corresponde ao seu ambiente virtual, normalmente aparece como Python com venv
+2. No Notebook, rode as duas primeiras células e verifique que `paths.data_raw` aponta para a pasta correta
+3. Rode a célula de leitura de schema e confirme que não há erro
+4. Execute o Notebook inteiro e confirme que você obteve
+   1. Tabela com taxa de DELIVERED por `id_sistema_mask` e colunas `n` e intervalo de confiança
+   2. Gráfico de decaimento por faixa de idade
+   3. Tabela `system_rank` com `score` ordenado
+   4. Exemplo de seleção de telefones para um CPF com `final_score` e `rank`
+   5. Cálculo de tamanho de amostra para o teste
 
-**Entregue**: Desenho do experimento. Defina hipótese nula, métricas primárias e secundárias, tamanho de amostra e tempo de duração estimado para o teste.
+Se algum passo falhar, a causa mais comum é o kernel errado ou o Jupyter sendo executado fora da raiz do repositório.
 
----
+## Detalhes metodológicos
 
-## Avaliação
+### Taxa por sistema
 
-Você será avaliado nos seguintes critérios:
+Para cada sistema calculo
 
-- **Manipulação de Dados (SQL/Python)**: Capacidade de lidar com arrays e joins complexos.
-- **Raciocínio Analítico e Estatístico**: Tratamento de vieses e solidez na definição de métricas.
-- **Visão de Negócio e Impacto**: Tradução da análise em uma regra de negócio acionável.
-- **Comunicação e Visualização**: Clareza na apresentação dos resultados.
+1. \(n\) tentativas
+2. \(s\) entregas
+3. \(p = s / n\) taxa observada
 
----
+Reporto intervalo de confiança de Wilson porque é mais estável do que aproximações normais quando a proporção está perto de zero ou um e quando o volume é moderado.
 
-## FAQ
+### Decaimento por atualidade
 
-**1. O que define um telefone "quente"?**
-Aquele que tem maior probabilidade de estar ativo, ser entregue e lido pelo cidadão correto.
+Defino a idade do dado no momento do envio em dias
 
-**2. Posso usar ferramentas de BI?**
-Sim, mas o core da análise e a lógica do algoritmo devem estar documentados no repositório.
+\(age\_days = envio\_data - registro\_data\_atualizacao\)
 
----
+Modelo uma regressão logística simples de `delivered` em função de `age_days` e estimo uma meia vida em odds.
 
-## Contato
+### Ranking de sistemas
 
-Dúvidas? Mande um e-mail para `patricia.catandi@prefeitura.rio` com o título começando com `[CASE DS]` 
+Para reduzir instabilidade em sistemas com pouco volume, estimo uma taxa suavizada via média a posteriori Beta
 
-Boa sorte! 🚀
+\(\hat p = (s + \alpha) / (n + \alpha + \beta)\)
+
+Depois aplico regularização por volume para evitar que sistemas com poucas tentativas dominem o topo do ranking.
+
+### Algoritmo de escolha por CPF
+
+O score final por telefone combina
+
+1. Score do sistema de origem do telefone
+2. Peso de recência com decaimento exponencial usando meia vida
+3. Ajuste opcional por DDD com base em desempenho histórico agregado
+
+A decisão é escolher os dois telefones com maior `final_score`.
+
+## Experimento A B
+
+Resumo do desenho recomendado
+
+1. Unidade de randomização CPF
+2. Controle escolhe dois telefones aleatórios elegíveis
+3. Tratamento escolhe dois telefones pelo `final_score`
+4. Métrica primária taxa de DELIVERED por CPF, ao menos uma entrega em duas tentativas
+5. Métricas secundárias taxa por tentativa e custo por entrega
+
+O Notebook calcula um tamanho de amostra inicial para um lift relativo configurável.
+
+## Resultados esperados
+
+Esta seção serve como checklist final para revisão e para orientar outra pessoa que abra o repositório pela primeira vez.
+
+### Prints principais que devem aparecer ao executar o Notebook
+
+1. Schemas das tabelas sem erro
+   1. `base_disparo_mascarado` com colunas incluindo `contato_telefone`, `envio_datahora`, `status_disparo`
+   2. `dim_telefone_mascarado` com `telefone_aparicoes` como lista de structs contendo `id_sistema` e `registro_data_atualizacao`
+
+2. Tabela de performance por sistema
+   1. DataFrame `rates_system` com colunas `id_sistema_mask`, `n`, `rate`, `ci_low`, `ci_high`
+   2. Interpretação esperada sistemas com maior taxa e intervalo de confiança mais estreito tendem a ser fontes mais quentes
+
+3. Decaimento por idade do cadastro
+   1. DataFrame `rates_age` com `age_bucket`, `n`, `rate` e intervalo de confiança
+   2. Gráfico de taxa por faixa de idade sem erros de barras negativas
+
+4. Ranking de sistemas
+   1. DataFrame `system_rank` com colunas `id_sistema_mask`, `n`, `successes`, `posterior_mean` e `score`
+   2. Ordenação por `score` em ordem decrescente
+
+5. Seleção automática de telefones por CPF
+   1. DataFrame `scored` com colunas `telefone`, `id_sistema_mask`, `registro_data_atualizacao`, `final_score`, `rank`
+   2. A checagem `scored.filter(rank <= 2)` retorna exatamente 2 linhas e `n_unique(telefone) == 2`
+
+6. Experimento A B
+   1. Célula de amostragem retorna `(baseline_p, p_t, n_per_group)` com `baseline_p` entre 0 e 1 e `n_per_group` maior que 0
+   2. Exemplo visto durante execução `baseline_p ≈ 0.9085`, `p_t = baseline_p + 0.01`, `n_per_group ≈ 9769`
+
+## Publicação no GitHub sem subir dados
+
+### Regra de ouro
+
+Não versionar `data/raw` nem qualquer artefato que permita reconstruir dados sensíveis.
+
+Este repositório inclui `.gitignore` para impedir commit acidental. Mesmo assim, antes de publicar, valide o status do git e confira se nenhum arquivo de `data/raw` aparece como staged.
+
+### Passo a passo para criar e subir um repositório
+
+1. Crie um repositório vazio no GitHub
+2. Na sua máquina, na raiz deste projeto, rode
+
+```
+git init
+git add .
+git commit -m "case whatsapp inteligencia de escolha"
+git branch -M main
+git remote add origin URL_DO_SEU_REPO
+git push -u origin main
+```
+
+3. Depois de subir, confira no GitHub que a pasta `data/raw` não está presente
+
+### Como enviar por e mail
+
+O recomendado é enviar o link do repositório no GitHub e informar como reproduzir
+
+1. Link do repositório
+2. Como baixar os dados no GCS
+3. Como executar o Notebook e quais resultados esperar conforme a seção Resultados esperados
