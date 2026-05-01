@@ -53,9 +53,14 @@ Código fonte em `src`
 3. `src/metrics.py` centraliza a definição de sucesso e cálculo de taxas com intervalo de confiança
 4. `src/scoring.py` implementa o ranking de sistemas e o score por telefone para seleção por CPF
 
-Notebook principal
+Notebook 
 
-`notebooks/01_inteligencia_escolha_whatsapp.ipynb`
+## Arquitetura e Organização da Análise
+
+* **[01_preparacao_de_dados.ipynb](notebooks/01_preparacao_de_dados.ipynb):** Responsável por carregar os dados brutos (`data/raw`), aplicar regras de desnormalização e exportar o dataset analítico processado (`data/processed/events_enriched.parquet`).
+* **[02_analise_exploratoria.ipynb](notebooks/02_analise_exploratoria.ipynb):** Consome os dados processados para calcular o intervalo de confiança das taxas de entrega, analisar vieses e plotar o decaimento exponencial de qualidade ao longo do tempo.
+* **[03_modelagem_e_conclusoes.ipynb](notebooks/03_modelagem_e_conclusoes.ipynb):** Aplica a suavização bayesiana para criar o ranking final dos sistemas, roda o algoritmo de escolha dos 2 melhores telefones por CPF e define a volumetria e hipóteses do Teste A/B.
+
 
 Este Notebook executa
 
